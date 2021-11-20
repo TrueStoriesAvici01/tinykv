@@ -165,7 +165,11 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
-	return nil
+	raft := Raft{
+		id: c.ID,
+		State: StateCandidate,
+	}
+	return &raft
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the

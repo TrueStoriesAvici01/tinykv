@@ -9,9 +9,9 @@ import (
 )
 
 var(
-	ETAG = " | [ERROR] | server: "
-	FTAG = " | [FAILED] | server: "
-	DTAG = " | [DEBUG] | server: "
+	ETAG = "[ERROR] | server: "
+	FTAG = "[FAILED] | server: "
+	DTAG = "[DEBUG] | server: "
 )
 
 // The functions below are Server's Raw API. (implements TinyKvServer).
@@ -32,7 +32,7 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 	} else {
 		resp = kvrpcpb.RawGetResponse{Value: ans}
 	}
-	reader.Close()
+	// reader.Close()
 	log.Println(DTAG, "[RawGet]:", resp)
 	return &resp, nil
 }
@@ -75,18 +75,21 @@ func (server *Server) RawDelete(_ context.Context, req *kvrpcpb.RawDeleteRequest
 func (server *Server) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*kvrpcpb.RawScanResponse, error) {
 	// Your Code Here (1).
 	// Hint: Consider using reader.IterCF
-	reader, err := server.storage.Reader(nil)
+	reader, err := server.storage.Reader(req.Context)
 	if err != nil {
 		log.Fatalln(ETAG, "open db reader failed:", err)
 	}
 	var kvs []*kvrpcpb.KvPair
 	iterator := reader.IterCF(req.Cf)
-	for ; iterator.Valid(); iterator.Next() {
+	defer iterator.Close()
+	var idx uint32
+	for iterator.Seek(req.StartKey); iterator.Valid() && idx < req.Limit; iterator.Next() {
 		it := iterator.Item()
 		key := it.Key()
 		value, _ := it.Value()
 		kv := kvrpcpb.KvPair{Key: key, Value: value}
 		kvs = append(kvs, &kv)
+		idx++
 	}
 	var resp kvrpcpb.RawScanResponse
 	resp.Kvs = kvs

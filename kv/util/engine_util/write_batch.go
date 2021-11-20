@@ -1,6 +1,9 @@
 package engine_util
 
 import (
+	"fmt"
+	"log"
+
 	"github.com/Connor1996/badger"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -12,6 +15,14 @@ type WriteBatch struct {
 	safePoint     int
 	safePointSize int
 	safePointUndo int
+}
+
+func (wb WriteBatch)String() string {
+	var kvInfo string
+	for i := 0; i < 5 && i < len(wb.entries); i++ {
+		kvInfo += string(wb.entries[i].Key) + string(wb.entries[i].Value) + ", "
+	}
+	return fmt.Sprintf("WriteBatch:{len : %v, entries: %v, size: %v}", len(wb.entries), kvInfo, wb.size)
 }
 
 const (
@@ -31,6 +42,7 @@ func (wb *WriteBatch) SetCF(cf string, key, val []byte) {
 		Key:   KeyWithCF(cf, key),
 		Value: val,
 	})
+	log.Println("current entries size:", len(wb.entries))
 	wb.size += len(key) + len(val)
 }
 
@@ -76,6 +88,7 @@ func (wb *WriteBatch) WriteToDB(db *badger.DB) error {
 		err := db.Update(func(txn *badger.Txn) error {
 			for _, entry := range wb.entries {
 				var err1 error
+				log.Println("write to db: entry value len:", len(entry.Value))
 				if len(entry.Value) == 0 {
 					err1 = txn.Delete(entry.Key)
 				} else {
@@ -90,6 +103,8 @@ func (wb *WriteBatch) WriteToDB(db *badger.DB) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
+	} else {
+		log.Println("error: try to write empty entry to db")
 	}
 	return nil
 }

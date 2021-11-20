@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap-incubator/tinykv/kv/coprocessor"
 	"github.com/pingcap-incubator/tinykv/kv/storage"
@@ -24,6 +25,10 @@ type Server struct {
 
 	// coprocessor API handler, out of course scope
 	copHandler *coprocessor.CopHandler
+}
+
+func (s Server)String() string {
+	return fmt.Sprintf("Server: {storage: %v}", s.storage)
 }
 
 func NewServer(storage storage.Storage) *Server {
