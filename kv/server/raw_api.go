@@ -34,7 +34,7 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 	}
 	reader.Close()
 	log.Println(DTAG, "[RawGet]:", resp)
-	return &resp, err
+	return &resp, nil
 }
 
 // RawPut puts the target data into storage and returns the corresponding response

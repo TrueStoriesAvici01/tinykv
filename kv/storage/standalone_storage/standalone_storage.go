@@ -59,9 +59,9 @@ func (s *StandAloneStorage) Start() error {
 
 func (s *StandAloneStorage) Stop() error {
 	// Your Code Here (1).
-	if s.DB != nil {
-		s.DB.Close()
-	}
+	// if s.DB != nil {
+	// 	s.DB.Close()
+	// }
 	return nil
 }
 
