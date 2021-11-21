@@ -16,17 +16,25 @@
 Package raft sends and receives messages in the Protocol Buffer format
 defined in the eraftpb package.
 
+raft包发送和接收以protocol buffer格式的消息，该格式定义在proto中的eraftpb包中。
+
 Raft is a protocol with which a cluster of nodes can maintain a replicated state machine.
 The state machine is kept in sync through the use of a replicated log.
 For more details on Raft, see "In Search of an Understandable Consensus Algorithm"
 (https://ramcloud.stanford.edu/raft.pdf) by Diego Ongaro and John Ousterhout.
+
+Raft是一种协议，用来规定一个节点集群中保存可复制的状态机。状态机通过使用可复制的log实现同步。
 
 Usage
 
 The primary object in raft is a Node. You either start a Node from scratch
 using raft.StartNode or start a Node from some initial state using raft.RestartNode.
 
+raft中主要的角色是节点。可以通过raft.StarNode或从设定的初始状态使用raft.RestartNode启动节点。
+
 To start a node from scratch:
+
+直接从配置中启动节点：
 
   storage := raft.NewMemoryStorage()
   c := &Config{
@@ -38,6 +46,8 @@ To start a node from scratch:
   n := raft.StartNode(c, []raft.Peer{{ID: 0x02}, {ID: 0x03}})
 
 To restart a node from previous state:
+
+从之前的状态中重新启动节点：
 
   storage := raft.NewMemoryStorage()
 
@@ -59,20 +69,30 @@ To restart a node from previous state:
   // peer information is already included in the storage.
   n := raft.RestartNode(c)
 
+  重新启动不需要设定其他节点信息，其他节点信息已经保存在Storage变量中。
+
 Now that you are holding onto a Node you have a few responsibilities:
+
+对于一个节点，其主要的工作有：
 
 First, you must read from the Node.Ready() channel and process the updates
 it contains. These steps may be performed in parallel, except as noted in step
 2.
 
+首先，必须通过Node.Ready()通道，并对节点进行更新。这些步骤可能并行执行。
+
 1. Write HardState, Entries, and Snapshot to persistent storage if they are
 not empty. Note that when writing an Entry with Index i, any
 previously-persisted entries with Index >= i must be discarded.
+
+1. 若HardState，Entries，Snapshot非空，将其写入到持久化存储中(storage)。注意：保存一个index为i的日志元素时，之前持久化的日志中所有index >= i的元素必须抛弃。
 
 2. Send all Messages to the nodes named in the To field. It is important that
 no messages be sent until the latest HardState has been persisted to disk,
 and all Entries written by any previous Ready batch (Messages may be sent while
 entries from the same batch are being persisted).
+
+2. 将所有消息发送到变量To中列出的节点。注意需要等到最新的HardState持久化到磁盘中才发送消息。
 
 Note: Marshalling messages is not thread-safe; it is important that you
 make sure that no new entries are persisted while marshalling.
