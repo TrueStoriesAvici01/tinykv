@@ -92,12 +92,14 @@ no messages be sent until the latest HardState has been persisted to disk,
 and all Entries written by any previous Ready batch (Messages may be sent while
 entries from the same batch are being persisted).
 
-2. 将所有消息发送到变量To中列出的节点。注意需要等到最新的HardState持久化到磁盘中才发送消息。
+2. 将所有消息发送到变量To中列出的节点。注意需要等到最新的HardState持久化到磁盘中才发送消息，并且所有的日志条目由已经准备好的batch写入。
 
 Note: Marshalling messages is not thread-safe; it is important that you
 make sure that no new entries are persisted while marshalling.
 The easiest way to achieve this is to serialize the messages directly inside
 your main raft loop.
+
+注意：对消息进行marshall操作并非线程安全的。确保在进行marshall操作时没有新的日志条目可以持久化。最简单的方式是在主循环中直接序列化消息。
 
 3. Apply Snapshot (if any) and CommittedEntries to the state machine.
 If any committed Entry has Type EntryType_EntryConfChange, call Node.ApplyConfChange()
@@ -107,14 +109,20 @@ by setting the NodeId field to zero before calling ApplyConfChange
 must be based solely on the state machine and not external information such as
 the observed health of the node).
 
+3. 应用快照和已提交的日志条目到状态机中。如果任何已提交的日志条目的类型为EntryType_EntryConfChange,调用Node.ApplyConfChange()将这个日志条目应用到该节点中。此时配置信息的改变需要被取消，可以通过在调用ApplyConfChange前设置NodeId值为0。ApplyConfChange必须通过一种或另一种方式调用，取消配置更改必须基于状态机而非外部信息如：节点的健康状态。
+
 4. Call Node.Advance() to signal readiness for the next batch of updates.
 This may be done at any time after step 1, although all updates must be processed
 in the order they were returned by Ready.
+
+4. 调用Node.Advance()表明已经准备好下次批量更新。这可以在第一步后的任何时间执行，虽然所有的更新需要按照Ready返回的顺序被处理。
 
 Second, all persisted log entries must be made available via an
 implementation of the Storage interface. The provided MemoryStorage
 type can be used for this (if you repopulate its state upon a
 restart), or you can supply your own disk-backed implementation.
+
+二：所有持久化的日志条目必须通过Storage接口的实现提供可用性，提供的MemoryStorage提供这样的支持（如果你通过重新启动的方式重现其状态），也可以提供自己的实现。
 
 Third, when you receive a message from another node, pass it to Node.Step:
 
@@ -122,10 +130,14 @@ Third, when you receive a message from another node, pass it to Node.Step:
 		n.Step(ctx, m)
 	}
 
+三：若你接收到其他节点的消息，将其传给Node.Step()
+
 Finally, you need to call Node.Tick() at regular intervals (probably
 via a time.Ticker). Raft has two important timeouts: heartbeat and the
 election timeout. However, internally to the raft package time is
 represented by an abstract "tick".
+
+最后：你需要定期调用Node.Tick()（可能通过time.Ticker）。Raft有两个超时时间：heartbeat和election timeout(心跳超时时间和选举超时时间)。而Raft内部的时间表示为抽象的tick。
 
 The total state machine handling loop will look something like this:
 
@@ -156,11 +168,15 @@ The total state machine handling loop will look something like this:
 To propose changes to the state machine from your node take your application
 data, serialize it into a byte slice and call:
 
+为了表示获取应用数据并将更改应用到节点的状态机中，将其序列化成字节切片并调用：
+
 	n.Propose(data)
 
 If the proposal is committed, data will appear in committed entries with type
 eraftpb.EntryType_EntryNormal. There is no guarantee that a proposed command will be
 committed; you may have to re-propose after a timeout.
+
+如果提议的已经提交，数据将出现在已提交的日志条目中，其类型为eraftpb.EntryType_EntryNormal。没有任何保证提议的命令将会提交，需要自行在超时之后进行重新提议。
 
 To add or remove a node in a cluster, build ConfChange struct 'cc' and call:
 
