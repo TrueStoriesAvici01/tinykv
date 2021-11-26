@@ -187,6 +187,16 @@ func (r *Raft) sendHeartbeat(to uint64) {
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
+	switch r.State {
+	case StateFollower:
+		r.electionElapsed++
+		r.becomeCandidate()
+	case StateCandidate:
+		r.electionElapsed++
+		r.becomeCandidate()
+	case StateLeader:
+		r.heartbeatElapsed++
+	}
 }
 
 // becomeFollower transform this peer's state to Follower

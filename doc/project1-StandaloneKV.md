@@ -2,24 +2,40 @@
 
 In this project, you will build a standalone key/value storage [gRPC](https://grpc.io/docs/guides/) service with the support of the column family. Standalone means only a single node, not a distributed system. [Column family]( <https://en.wikipedia.org/wiki/Standard_column_family> ) (it will abbreviate to CF below) is a term like key namespace, namely the values of the same key in different column families is not the same. You can simply regard multiple column families as separate mini databases. It’s used to support the transaction model in the project4, you will know why TinyKV needs the support of CF then.
 
+在本项目中，你将构建一个单体的key/value存储服务并支持列簇(column family)。单体意味着只有单个节点，并非分布式系统。列簇（简称CF）类似于键的命名空间，即相同key的不同列簇的值是不同的。可以认为多个列簇分别为独立的小型数据库。其被用于支持项目4的事务模型。
+
 The service supports four basic operations: Put/Delete/Get/Scan. It maintains a simple database of key/value pairs. Keys and values are strings. `Put` replaces the value for a particular key for the specified CF in the database, `Delete` deletes the key's value for the specified CF, `Get` fetches the current value for a key for the specified CF, and `Scan` fetches the current value for a series of keys for the specified CF.
+
+服务支持四种基本操作：put/delete/get/scan。其为一个简单的key/value对数据库。key和value都是字符串。put将特定CF中特定的key设置为给定的value，delete删除一个给定CF中给定的key对应的value，get获取给定CF的特定key的当前value，scan对给定的CF中一系列的key获取value。
 
 The project can be broken down into 2 steps, including:
 
 1. Implement a standalone storage engine.
 2. Implement raw key/value service handlers.
 
+整个项目分为两个部分：
+1. 实现一个单体的存储引擎。
+2. 实现一个原生的key-value服务处理器。
+
 ### The Code
 
 The `gRPC` server is initialized in `kv/main.go` and it contains a `tinykv.Server` which provides a `gRPC` service named `TinyKv`. It was defined by [protocol-buffer]( https://developers.google.com/protocol-buffers ) in `proto/proto/tinykvpb.proto`, and the detail of rpc requests and responses are defined in `proto/proto/kvrpcpb.proto`.
 
+gRPC服务器在kv/main.go中进行初始化，其包含一个tinykv.Server，可以提供名为TinyKv的gRPC服务。其定义在proto/proto/tinykvpb.proto，具体rpc请求和响应细节定义在proto/proto/kvrpcpb.proto。
+
 Generally, you don’t need to change the proto files because all necessary fields have been defined for you. But if you still need to change, you can modify the proto file and run `make proto` to update related generated go code in `proto/pkg/xxx/xxx.pb.go`.
 
+一般情况下，不需要更改proto文件，因为所需的域已经定义好了。但如果你需要对其进行改变，你可以更改proto文件并运行make proto去更新相关生成的go代码（位于proto/pkg/xxx/xxx.pb.go）
+
 In addition, `Server` depends on a `Storage`, an interface you need to implement for the standalone storage engine located in `kv/storage/standalone_storage/standalone_storage.go`. Once the interface `Storage` is implemented in `StandaloneStorage`, you could implement the raw key/value service for the `Server` with it.
+
+此外，Server依赖于一个Storage接口，你需要实现一个单体存储引擎（位于kv/storage/standalone_storage/standalone_storage.go）。一旦实现了StandaloneStorage，你可以基于此针对Server接口实现原生key/value服务。
 
 #### Implement standalone storage engine
 
 The first mission is implementing a wrapper of [badger](https://github.com/dgraph-io/badger) key/value API. The service of gRPC server depends on an `Storage` which is defined in `kv/storage/storage.go`. In this context, the standalone storage engine is just a wrapper of badger key/value API which is provided by two methods:
+
+第一个目标是实现一个badger键值API的包装类。gRPC服务器提供的服务依赖于kv/storage/storage.go中定义的Storage。当前，单体存储引擎只是一个badger的key/valueAPI的包装类，提供两种方法：
 
 ``` go
 type Storage interface {
@@ -31,9 +47,15 @@ type Storage interface {
 
 `Write` should provide a way that applies a series of modifications to the inner state which is, in this situation, a badger instance.
 
+Write方法提供一种将一系列修改应用到内部状态的途径，目前内部状态指的是一个badger实例。
+
 `Reader` should return a `StorageReader` that supports key/value's point get and scan operations on a snapshot.
 
+Reader返回一个StorageReader实例，其支持在一个快照上针对key/value点的获取和扫描操作。
+
 And you don’t need to consider the `kvrpcpb.Context` now, it’s used in the following projects.
+
+目前不需要考虑kvrpcpb.Context变量，其在后续项目才用上。
 
 > Hints:
 >
@@ -42,6 +64,13 @@ And you don’t need to consider the `kvrpcpb.Context` now, it’s used in the f
 > - TinyKV uses a fork of the original version of `badger` with some fix, so just use `github.com/Connor1996/badger` instead of `github.com/dgraph-io/badger`.
 > - Don’t forget to call `Discard()` for badger.Txn and close all iterators before discarding.
 
+* 应该使用badger.Txn实现Reader功能，因为badger提供的事务处理器可以提供一个一致键值快照。
+* badger并不支持列簇。engin_util包（kv/util/engine_util）通过在key添加前缀来模拟列簇。比如，对于特定属于特定列簇cf的key，其以cf_key的形式进行存储。其对badger进行包装并提供许多有用的函数。建议通过engine_util提供的方式实现读写操作。
+* TinyKV使用badger的fork版，并添加一些修改。建议使用提供的修改版而非原版。
+* 对于badger.Txn，不要忘记使用完后关闭所有的迭代器并调用Discard()方法。
+
 #### Implement service handlers
 
 The final step of this project is to use the implemented storage engine to build raw key/value service handlers including RawGet/ RawScan/ RawPut/ RawDelete. The handler is already defined for you, you only need to fill up the implementation in `kv/server/raw_api.go`. Once done, remember to run `make project1` to pass the test suite.
+
+最后一个步骤是使用实现的存储引擎构建一个原生的key/value服务处理器，其提供RawGet，RawScan，RawPut，RawDelete服务。处理器已经定义好，你只需要在kv/server/raw_api.go完成对应的实现。一旦完成，可以通过make project1进行测试。

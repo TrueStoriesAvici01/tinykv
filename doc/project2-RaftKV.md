@@ -4,11 +4,17 @@ Raft is a consensus algorithm that is designed to be easy to understand. You can
 
 In this project, you will implement a high available kv server based on raft,  which needs you not only to implement the Raft algorithm but also use it practically, and bring you more challenges like managing raft’s persisted state with `badger`, add flow control for snapshot message, etc.
 
+在这个项目中，你将基于raft算法实现一个高可用的kv服务器。不只是实现raft算法，而且实际使用该实现。除此之外，需要完成更多的工作：使用badger管理raft的持久化状态，对于快照消息增加流程控制。
+
 The project has 3 parts you need to do, including:
 
 - Implement the basic Raft algorithm
 - Build a fault-tolerant KV server on top of Raft
 - Add the support of raftlog GC and snapshot
+
+* 实现基本的raft算法
+* 在raft上构建一个容错的kv服务器
+* 增加对日志进行垃圾回收和快照的支持
 
 ## Part A
 
@@ -16,7 +22,11 @@ The project has 3 parts you need to do, including:
 
 In this part, you will implement the basic raft algorithm. The code you need to implement is under `raft/`. Inside `raft/`, there are some skeleton code and test cases waiting for you. The raft algorithm you're gonna implement here has a well-designed interface with the upper application. Moreover, it uses a logical clock (named tick here) to measure the election and heartbeat timeout instead of a physical clock. That is to say, do not set a timer in the Raft module itself, and the upper application is responsible to advance the logical clock by calling `RawNode.Tick()`. Apart from that, messages sending and receiving along with other things are processed asynchronously, it is also up to the upper application when to actually do these things (see below for more detail). For example, Raft will not block waiting on the response of any request message.
 
+这部分，你将实现一个基本的raft算法。你需要实现raft/目录下的文件。在raft/目录下，已经准备了一些框架代码和测试用例。你将要实现的raft算法具有良好的接口设计。而且，其使用逻辑时钟（即tick）去测量选举和心跳超时而非物理时钟。即：不要在Raft实例中设置一个timer，由上层应用通过调用RawNode.Tick()方法驱动逻辑时钟。除此之外，消息的发送和接收与其他事情是异步处理的，这也取决于上层应用
+
 Before implementing, please checkout the hints for this part first. Also, you should take a rough look at the proto file `proto/proto/eraftpb.proto`. Raft sends and receives messages and related structs are defined there, you’ll use them for the implementation. Note that, unlike Raft paper, it divides Heartbeat and AppendEntries into different messages to make the logic more clear.
+
+在实现之前，请注意提示部分。同时，可以浏览一下proto/proto/eraftpb.proto文件。Raft中发送和接收的消息以及其他的结构体在这个文件进行定义。你在实现过程中会用到它们。并且请注意：本实现中将心跳报文Heartbeat和附加日志条目报文AppendEntries分成两种消息。
 
 This part can be broken down into 3 steps, including:
 
@@ -24,27 +34,45 @@ This part can be broken down into 3 steps, including:
 - Log replication
 - Raw node interface
 
+- 领导选举
+- 日志复制
+- 原生节点接口
+
 ### Implement the Raft algorithm
 
 `raft.Raft` in `raft/raft.go` provides the core of the Raft algorithm including message handling, driving the logic clock, etc. For more implementation guides, please check `raft/doc.go` which contains an overview design and what these `MessageTypes` are responsible for.
+
+raft/raft.go文件中的Raft结构体是Raft算法中的核心部分，其包括消息处理，驱动逻辑时钟等。更多信息可以查阅raft/doc.go文件关于整体设计理念以及各个MessageTypes对应的类型。
 
 #### Leader election
 
 To implement leader election, you may want to start with `raft.Raft.tick()` which is used to advance the internal logical clock by a single tick and hence drive the election timeout or heartbeat timeout. You don’t need to care about the message sending and receiving logic now. If you need to send out a message,  just push it to `raft.Raft.msgs` and all messages the raft received will be passed to `raft.Raft.Step()`. The test code will get the messages from `raft.Raft.msgs` and pass response messages through `raft.Raft.Step()`. The `raft.Raft.Step()` is the entrance of message handling, you should handle messages like `MsgRequestVote`, `MsgHeartbeat` and their response. And please also implement test stub functions and get them called properly like `raft.Raft.becomeXXX` which is used to update the raft internal state when the raft’s role changes.
 
+要实现领导选举，你需要从raft.Raft.tick()方法开始实现，其用于驱动内部逻辑时钟从而驱动选举超时和心跳超时。现在你暂时不需要考虑消息的接收和发送。若你需要发送一个消息，只需要将其发送给raft.Raft.msgs。所有Raft接收的消息将会传送给raft.Raft.Step()。raft.Raft.Step()是消息处理的入口，你应该在这个方法内处理MsgRequestVote、MsgHeartbeat已经这些消息的响应报文。同时也需要实现匿名测试函数并且调用对应的raft.Raft.becomeXXX函数，这些函数用来在Raft的角色发生改变时更新其内部状态。
+
 You can run `make project2aa` to test the implementation and see some hints at the end of this part.
+
+你可以运行make project2aa来测试你的实现。
 
 #### Log replication
 
 To implement log replication, you may want to start with handling `MsgAppend` and `MsgAppendResponse` on both the sender and receiver sides. Checkout `raft.RaftLog` in `raft/log.go` which is a helper struct that helps you manage the raft log, in here you also need to interact with the upper application by the `Storage` interface defined in `raft/storage.go` to get the persisted data like log entries and snapshot.
 
+为了实现日志复制功能，你需要在发送端和接受端处理MsgAppend和MsgAppendResponse。检查raft/log.go中的raft.RaftLog结构体，这是一个帮助你管理raft日志的帮助类。这里涉及到与上层应用定义的Storage接口进行交互，以获得像日志条目和快照等持久性数据。
+
 You can run `make project2ab` to test the implementation and see some hints at the end of this part.
+
+运行make project2ab测试你的日志复制实现。
 
 ### Implement the raw node interface
 
 `raft.RawNode` in `raft/rawnode.go` is the interface we interact with the upper application, `raft.RawNode` contains `raft.Raft` and provide some wrapper functions like `RawNode.Tick()`and `RawNode.Step()`. It also provides `RawNode.Propose()` to let the upper application propose new raft logs.
 
+raft/rawnode.go中的raft.RawNode结构体是与上层应用交互的接口。raft.RawNode是一个包含raft.Raft实例的包装类并提供RawNode.Tick()、RawNode.Step()等函数。其中的RawNode.Propose()函数用于提议一个新的日志。
+
 Another important struct `Ready` is also defined here. When handling messages or advancing the logical clock, the `raft.Raft` may need to interact with the upper application, like:
+
+另一个重要的结构体是Ready。当处理消息或驱动逻辑时钟时，raft.Raft需要一个与上层应用交互的接口，如：
 
 - send messages to other peers
 - save log entries to stable storage
@@ -52,9 +80,18 @@ Another important struct `Ready` is also defined here. When handling messages or
 - apply committed log entries to the state machine
 - etc
 
+- 发送消息给其他节点
+- 将日志条目保存到持久化存储中
+- 将任期、提交索引、投票等硬状态(hard state)保存到持久化存储中
+- 将提交的日志条目应用到状态机中
+
 But these interactions do not happen immediately, instead, they are encapsulated in `Ready` and returned by `RawNode.Ready()` to the upper application. It is up to the upper application when to call `RawNode.Ready()` and handle it.  After handling the returned `Ready`, the upper application also needs to call some functions like `RawNode.Advance()` to update `raft.Raft`'s internal state like the applied index, stabled log index, etc.
 
+但这些交互并不立即发生，而是包装在Ready结构体中由RawNode.Ready()方法返回给上层应用。由上层应用决定何时调用RawNode.Read()来处理这些操作。在处理返回的Ready结构体后，上层应用需要调用类似于RawNode.Advance()方法来更新raft.Raft实例的内部状态（已应用的日志条目索引、持久化的日志索引）
+
 You can run `make project2ac` to test the implementation and run `make project2a` to test the whole part A.
+
+通过make project2ac测试你的原生节点接口实现。
 
 > Hints:
 >
@@ -66,6 +103,16 @@ You can run `make project2ac` to test the implementation and run `make project2a
 > - Don’t forget the election timeout should be different between peers.
 > - Some wrapper functions in `rawnode.go` can implement with `raft.Step(local message)`
 > - When starting a new raft, get the last stabled state from `Storage` to initialize `raft.Raft` and `raft.RaftLog`
+
+提示：
+> 若有需要，可以在raft.Raft、raft.RaftLog和raft.RawNode中添加任何状态、在eraftpb.proto中添加新的消息类型。
+> 测试用例假设首次任期为0开始新的raft实例。
+> 测试用例假设新当选的leader会在它的任期中追加一个空日志条目(noop entry)
+> 测试用例不会对本地消息（MessageType_MsgHup、MessageType_MsgBeat和MessageType_MsgPropose）设置任期。
+> 追加日志条目对于leader和非leader具有差异。
+> 不同的节点的选举超时时间应该不同。
+> rawnode.go中的一些包装函数可以使用raft.Step进行实现。
+> 开始一个新的raft实例时，可以从Storage中获取最后一次持久化状态用来初始化raft.Raft和raft.RaftLog。
 
 ## Part B
 
