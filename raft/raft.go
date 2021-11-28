@@ -169,7 +169,7 @@ type Raft struct {
 }
 
 func (r Raft)String() string {
-	return fmt.Sprintf("Raft: {id:", r.id, "| term:", r.Term, "| vote:", r.Vote, "| state:", r.State, "| leader:", r.Lead, " | heartbeat timeout:", r.heartbeatTimeout, "| heartbeat count:", r.heartbeatElapsed, "| election timeout:", r.electionTimeout, "| election count:", r.electionElapsed)
+	return fmt.Sprintln("Raft: {id:", r.id, "| term:", r.Term, "| vote:", r.Vote, "| state:", r.State, "| leader:", r.Lead, " | heartbeat timeout:", r.heartbeatTimeout, "| heartbeat count:", r.heartbeatElapsed, "| election timeout:", r.electionTimeout, "| election count:", r.electionElapsed)
 }
 
 // newRaft return a raft peer with the given config
@@ -180,16 +180,18 @@ func newRaft(c *Config) *Raft {
 	// Your Code Here (2A).
 	rl := RaftLog{
 		storage: c.Storage,
-		applied: c.Applied,
 	}
 	raft := Raft{
 		id: c.ID,
-		State: StateCandidate,
+		RaftLog: &rl,
+		Prs: make(map[uint64]*Progress),
+		State: StateFollower,
+		votes: make(map[uint64]bool),
+		msgs: make([]pb.Message, 0),
 		electionTimeout: 100 + int(rand.Int31n(200)),
 		electionElapsed: c.ElectionTick,
 		heartbeatTimeout: 50 + int(rand.Int31n(30)),
 		heartbeatElapsed: c.HeartbeatTick,
-		RaftLog: &rl,
 	}
 	return &raft
 }
