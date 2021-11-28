@@ -16,6 +16,9 @@ package raft
 
 import (
 	"errors"
+	"fmt"
+	"log"
+	"math/rand"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -41,6 +44,12 @@ var stmap = [...]string{
 func (st StateType) String() string {
 	return stmap[uint64(st)]
 }
+
+var (
+	DTAG = " | [DEBUG] | raft : |"
+	ETAG = " | [ERROR] | raft : |"
+	FTAG = " | [FAILED] | raft : |"
+)
 
 // ErrProposalDropped is returned when the proposal is ignored by some cases,
 // so that the proposer can be notified and fail fast.
@@ -159,15 +168,28 @@ type Raft struct {
 	PendingConfIndex uint64
 }
 
+func (r Raft)String() string {
+	return fmt.Sprintf("Raft: {id:", r.id, "| term:", r.Term, "| vote:", r.Vote, "| state:", r.State, "| leader:", r.Lead, " | heartbeat timeout:", r.heartbeatTimeout, "| heartbeat count:", r.heartbeatElapsed, "| election timeout:", r.electionTimeout, "| election count:", r.electionElapsed)
+}
+
 // newRaft return a raft peer with the given config
 func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
 	// Your Code Here (2A).
+	rl := RaftLog{
+		storage: c.Storage,
+		applied: c.Applied,
+	}
 	raft := Raft{
 		id: c.ID,
 		State: StateCandidate,
+		electionTimeout: 100 + int(rand.Int31n(200)),
+		electionElapsed: c.ElectionTick,
+		heartbeatTimeout: 50 + int(rand.Int31n(30)),
+		heartbeatElapsed: c.HeartbeatTick,
+		RaftLog: &rl,
 	}
 	return &raft
 }
@@ -176,12 +198,29 @@ func newRaft(c *Config) *Raft {
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
-	return false
+	log.Println(DTAG, r, " [send append] to:", to)
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgAppend,
+		To: to,
+		From: r.id,
+		Term: r.Term,
+		Commit: r.RaftLog.committed,
+	}
+	r.msgs = append(r.msgs, msg)
+	return true
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	log.Println(DTAG, r, " [send heart beat] to:", to)
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgHeartbeat,
+		To: to,
+		From: r.id,
+		Term: r.Term,
+	}
+	r.msgs = append(r.msgs, msg)
 }
 
 // tick advances the internal logical clock by a single tick.
@@ -189,10 +228,8 @@ func (r *Raft) tick() {
 	// Your Code Here (2A).
 	switch r.State {
 	case StateFollower:
-		r.electionElapsed++
 		r.becomeCandidate()
 	case StateCandidate:
-		r.electionElapsed++
 		r.becomeCandidate()
 	case StateLeader:
 		r.heartbeatElapsed++
@@ -202,17 +239,34 @@ func (r *Raft) tick() {
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	// Your Code Here (2A).
+	r.State = StateFollower
+	r.Term = term
+	r.Lead = lead
+	for k := range r.votes {
+		r.votes[k] = false
+	}
+	r.heartbeatElapsed = 0
+	r.electionElapsed = 0
 }
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
+	r.electionElapsed++
+	r.Term++
+	r.State = StateCandidate
+	r.Vote = r.id
+	r.votes[r.Term] = true
+
 }
 
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	r.State = StateLeader
+	r.Lead = r.id
+
 }
 
 // Step the entrance of handle message, see `MessageType`
@@ -221,7 +275,18 @@ func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
 	switch r.State {
 	case StateFollower:
+		switch m.MsgType{
+		case pb.MessageType_MsgAppend:
+			r.handleAppendEntries(m)
+		case pb.MessageType_MsgHeartbeat:
+		}
 	case StateCandidate:
+		switch m.MsgType {
+		case pb.MessageType_MsgAppend:
+			r.handleAppendEntries(m)
+		case pb.MessageType_MsgHeartbeat:
+			
+		}
 	case StateLeader:
 	}
 	return nil
