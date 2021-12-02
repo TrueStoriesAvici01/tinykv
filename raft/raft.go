@@ -426,7 +426,7 @@ func (r *Raft) becomeCandidate() {
 //
 // 2. update leader id as self
 //
-// 3. init peers progress
+// 3. init peers progress ==> next index: leader last log index + 1; match index ==> index of highest log entry known to be replicated on server
 //
 // 4. set heartbeat count as 0
 //
@@ -442,14 +442,20 @@ func (r *Raft) becomeLeader() {
 	r.electionElapsed = 0
 	for id := range r.Prs {
 		if l := len(r.RaftLog.entries); l > 0 {
-			r.Prs[id].Match = r.RaftLog.entries[l-1].Index
-			r.Prs[id].Next = r.Prs[id].Match + 1
+			r.Prs[id].Next = r.RaftLog.entries[l].Index + 1
 		}
 		if id != r.id {
 			r.sendHeartbeat(id)
 		}
 	}
-
+	// TODO: propose a noop entry
+	noop := pb.Message{
+		MsgType: pb.MessageType_MsgHup,
+		To: r.id,
+		From: r.id,
+		Term: r.Term,
+	}
+	r.send(noop)
 	log.Println(DTAG, "[become leader] |", r)
 }
 
@@ -483,11 +489,6 @@ func (r *Raft) stepFollower(m pb.Message) error {
 			return errors.New("no leader found, reject this propose")
 		}
 	case pb.MessageType_MsgAppend:
-		// 1. term < current term ==> reject
-		// 2. no entry which index is prevLogIndex and term is prevLogTerm ==> reject
-		// 3. if conflict between a new entry and existing one in log, delete this entry and all last in log
-		// 4. append any entry if it is not exist in log
-		// 5. if leader commit index > commit index, set commit index = min(leader commit index, index of last new entry)
 		r.handleAppendEntries(m)
 	case pb.MessageType_MsgHeartbeat:
 		r.electionElapsed = 0
@@ -550,19 +551,19 @@ func (r *Raft) stepLeader(m pb.Message) {
 //
 // step:
 //
-// 1. return false if message term less than current term
+// 1. message term less than current term ==> reject
 //
-// 2. return false if no entry with prevLogTerm in prevLogIndex of log
+// 2. no entry with prevLogTerm in prevLogIndex of log ==> reject
 //
-// 3. if there is a entry in log has same same index but different term with new entry, delete this entry and all subsequent
+// 3. there is a entry in log has same same index but different term with new entry ==> delete this entry and all subsequent
 //
-// 4. append all entry which not exists in log
+// 4. any entries that not exists in log ==> append
 //
-// 5. if leader commit index > current commit index, set commit index = min(leader commit index, last new entry index)
+// 5. leader commit index > current commit index ==> set commit index = min(leader commit index, last new entry index)
 func (r *Raft) handleAppendEntries(m pb.Message) {
 	// Your Code Here (2A).
 	log.Println(DTAG, "[handle append entries] | message:", m, "|", r)
-
+	
 	resp := pb.Message{
 		MsgType: pb.MessageType_MsgAppendResponse,
 		To:      m.From,
@@ -570,18 +571,30 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		Term:    r.Term,
 		Commit:  r.RaftLog.committed,
 	}
+	defer log.Println(DTAG, "[after handle append entries] | message:", m)
+	defer r.ApplyEntries()
+
 	if m.Term < r.Term {
 		log.Println(DTAG, "find a outdated message. message term:", m.Term, ", current term:", r.Term)
 		resp.Reject = true
+		if l := len(r.RaftLog.entries); l > 0 {
+			resp.Index = r.RaftLog.entries[l-1].Index
+			resp.LogTerm = r.RaftLog.entries[l-1].Term
+		}
 		r.send(resp)
 		return
 	} else if m.Term > r.Term {
 		log.Println(DTAG, "may find a leader, become follower. message term:", m.Term, ", current term:", r.Term)
+		resp.Term = m.Term
 		r.becomeFollower(m.Term, m.From)
 	}
 
 	if m.Index < 0 || m.Index >= uint64(len(r.RaftLog.entries)) || r.RaftLog.entries[m.Index].Term != m.LogTerm {
 		log.Println(DTAG, "cannot find previous log with index:", m.Index, ", term:", m.Term, ", log length:", len(r.RaftLog.entries))
+		if l := len(r.RaftLog.entries); l > 0 {
+			resp.Index = r.RaftLog.entries[l-1].Index
+			resp.LogTerm = r.RaftLog.entries[l-1].Term
+		}
 		resp.Reject = true
 		r.send(resp)
 		return
@@ -597,8 +610,18 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 			} else {
 				log.Println(DTAG, "log entry match. index:", ei, ", term:", et)
 			}
+		} else if ei == uint64(len(r.RaftLog.entries)) {
+			r.RaftLog.entries = append(r.RaftLog.entries, *e)
+		} else { // new entry index exceed current log ==> reject
+			log.Println(FTAG, "find a illegal entry. Entry index:", ei, "| current log length:", len(r.RaftLog.entries))
+			if l := len(r.RaftLog.entries); l > 0 {
+				resp.Index = r.RaftLog.entries[l - 1].Index
+				resp.LogTerm = r.RaftLog.entries[l - 1].Term
+			}
+			resp.Reject = true
+			r.send(resp)
+			return
 		}
-		r.RaftLog.entries = append(r.RaftLog.entries, *e)
 	}
 
 	if m.Commit > r.RaftLog.committed {
@@ -608,8 +631,13 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		log.Println(DTAG, "leader commit index:", m.Commit, "| my commit index:", r.RaftLog.committed)
 	}
 
-	resp.Term = r.Term
+}
 
+// for all servers, if commit index > last applied index, apply log[lastApplied] to state machine
+func (r *Raft) ApplyEntries() {
+	for r.RaftLog.committed > r.RaftLog.applied {
+		r.RaftLog.applied++
+	}
 }
 
 func (r *Raft) handleAppendResponse(m pb.Message) {
