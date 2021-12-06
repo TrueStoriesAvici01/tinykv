@@ -290,10 +290,32 @@ func (r *Raft) tick() {
 	case StateFollower:
 		r.electionElapsed++
 		if r.electionElapsed >= r.electionTimeout {
-			r.startElection()
+			r.becomeCandidate()
+		} else {
+			log.Println(DTAG, "raft id:", r.id, ", state:", r.State,
+			", election elapsed:", r.electionElapsed, ", election timeout:", r.electionTimeout);
 		}
 	case StateCandidate:
+		r.electionElapsed++
+		if r.electionElapsed >= r.electionTimeout {
+			r.becomeCandidate()
+		} else {
+			log.Println(DTAG, "raft id:", r.id, ", state:", r.State,
+			", election elapsed:", r.electionElapsed, ", election timeout:", r.electionTimeout);
+		}
 	case StateLeader:
+		r.heartbeatElapsed++
+		if r.heartbeatElapsed >= r.heartbeatTimeout {
+			r.heartbeatElapsed = 0
+			for id := range r.Prs {
+				if id != r.id {
+					r.sendHeartbeat(id)
+				}
+			}
+		} else {
+			log.Println(DTAG, "raft id:", r.id, ", state:", r.State,
+			", heartbeat elapsed:", r.heartbeatElapsed, ", heartbeat timeout:", r.heartbeatTimeout);
+		}
 	}
 }
 
@@ -314,8 +336,7 @@ func (r *Raft) startElection() {
 	r.Term++
 	r.State = StateCandidate
 	r.Vote = r.id
-	r.votes[r.Term] = true
-	r.electionTimeout = int(100 + rand.Int31n(200))
+	r.electionTimeout = int(5 + rand.Int() % 6)
 	msg := pb.Message{
 		MsgType: pb.MessageType_MsgHup,
 		To:      r.id,
@@ -335,9 +356,10 @@ func (r *Raft) broadcastHeartbeat() {
 	for id := range r.Prs {
 		if id != r.id {
 			r.sendHeartbeat(id)
+			log.Println(DTAG, r.id, "==heartbeat==>", id)
 		}
 	}
-	log.Println(DTAG, "[broadcast heartbeat] | raft:", r)
+	log.Println(DTAG, "[broadcast heartbeat] |", r)
 }
 
 func (r *Raft) broadcastAppend() {
@@ -395,12 +417,18 @@ func (r *Raft) becomeCandidate() {
 	r.Term++
 	r.State = StateCandidate
 	r.Vote = r.id
-	r.votes[r.Term] = true
 	r.voteCount = 1
 	r.heartbeatElapsed = 0
 	r.electionElapsed = 0
 	rand.Seed(time.Now().UnixNano())
 	r.electionTimeout = 5 + rand.Int()%6
+	msg := pb.Message{
+		MsgType: pb.MessageType_MsgHup,
+		To:      r.id,
+		From:    r.id,
+		Term:    r.Term,
+	}
+	r.Step(msg)
 	for id := range r.Prs {
 		if id != r.id {
 			r.sendRequestVote(id)
@@ -489,45 +517,62 @@ func (r *Raft) stepFollower(m pb.Message) error {
 			return errors.New("no leader found, reject this propose")
 		}
 	case pb.MessageType_MsgAppend:
+		r.electionElapsed = 0
+		if r.Lead != m.From {
+			log.Println(DTAG, "receive append RPC from different leader. leader id:", r.Lead, ", message from: ", m.From)
+			r.Lead = m.From
+		}
 		r.handleAppendEntries(m)
 	case pb.MessageType_MsgHeartbeat:
 		r.electionElapsed = 0
-		r.Lead = m.From
+		if r.Lead != m.From {
+			log.Println(DTAG, "receive heartbeat RPC from different leader. leader id:", r.Lead, ", message from:", m.From)
+			r.Lead = m.From
+		}
 		r.handleHeartbeat(m)
 	case pb.MessageType_MsgSnapshot:
 		r.electionElapsed = 0
-		r.Lead = m.From
+		if r.Lead != m.From {
+			log.Println(DTAG, "receive snapshot RPC from different leader. leader id:", r.Lead, ", message from:", m.From)
+			r.Lead = m.From
+		}
 		r.handleSnapshot(m)
-	case pb.MessageType_MsgTransferLeader:
-		m.To = r.Lead
-		r.send(m)
+	default:
+		log.Println(DTAG, "receive message: type:", m.MsgType, ", from:", m.From)
 	}
 	return nil
 }
 
 func (r *Raft) stepCandidate(m pb.Message) {
 	log.Println(DTAG, "[step candidate] | Message:", m)
-	defer log.Println(DTAG, "[step candidate] after | Raft:", r)
+	defer log.Println(DTAG, "[after step candidate] |", r)
 
 	switch m.MsgType {
 	case pb.MessageType_MsgPropose:
-		log.Println(DTAG, "current candidate, receive a propose ==> drop it")
+		log.Println(DTAG, "current candidate id:", r.id, "receive a propose ==> drop it")
 	case pb.MessageType_MsgAppend:
-		r.becomeFollower(m.Term, m.From)
 		r.handleAppendEntries(m)
 	case pb.MessageType_MsgHeartbeat:
-		r.becomeFollower(m.Term, m.From)
 		r.handleHeartbeat(m)
 	case pb.MessageType_MsgSnapshot:
-		r.becomeFollower(m.Term, m.From)
 		r.handleSnapshot(m)
 	case pb.MessageType_MsgRequestVoteResponse:
-		if m.To == r.id && !m.Reject {
+		if m.To == r.id && !m.Reject && !r.votes[m.From] {
+			r.votes[m.From] = true
 			r.voteCount++
+		} else {
+			log.Println(DTAG, r.id, "receive rquest vote response. from:", m.From, ", to:", m.To, ", is reject:", m.Reject, ", is voted:", r.votes[m.From])
 		}
-		if int(r.voteCount) >= len(r.Prs) {
+		if r.voteCount >= uint64(math.Floor(float64(len(r.Prs)/2)+0.5)) {
 			r.becomeLeader()
+		} else {
+			log.Println(DTAG, r.id, "receive request vote response. now voted count:", r.voteCount, ", total count:", len(r.Prs))
 		}
+	case pb.MessageType_MsgTransferLeader:
+		log.Println(DTAG, r.id, "try to transfer leader")
+		r.becomeLeader()
+	default:
+		log.Println(DTAG, r.id, "receive a message, type:", m.MsgType, ", from:", m.From, " ==> drop it")
 	}
 }
 
@@ -539,11 +584,13 @@ func (r *Raft) stepLeader(m pb.Message) {
 	case pb.MessageType_MsgBeat:
 		r.broadcastHeartbeat()
 	case pb.MessageType_MsgPropose:
-		r.broadcastAppend()
+		log.Println(DTAG, "TODO: process propose from:", m.From)
 	case pb.MessageType_MsgAppendResponse:
 		r.handleAppendResponse(m)
 	case pb.MessageType_MsgHeartbeatResponse:
 		r.handleHeartbeatResponse(m)
+	case pb.MessageType_MsgRequestVote:
+
 	}
 }
 
@@ -651,6 +698,29 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 
 func (r *Raft) handleHeartbeatResponse(m pb.Message) {
 
+}
+
+// handle request vote RPC
+//
+// 1. candidate term < current term ==> reject
+//
+// 2. not voted or already voted for this candidate, and 
+func (r *Raft) handleRequestVote(m pb.Message) {
+	log.Println(DTAG, r.id, " [handle request vote] | from", m.From)
+
+	resp := pb.Message {
+		MsgType: pb.MessageType_MsgRequestVoteResponse,
+		To: m.From,
+		From: r.id,
+		Term: r.Term,
+	}
+	if m.Term < r.Term {
+		log.Println(DTAG, r.id, "receive request vote from:", m.From, "| current term:", r.Term, "| message term:", m.Term)
+		resp.Reject = false
+		r.send(resp)
+		return
+	}
+	// TODO: 
 }
 
 // handleSnapshot handle Snapshot RPC request
